@@ -7,10 +7,6 @@
 const int trigPin = D5;
 const int echoPin = D6;
 
-long duration;
-int distance_cm;
-int distance_in;
-
 String CommOut=""; String CommIn=""; String lastComm = "";
 int StepSpeed = 50; int lastSpeed = 50;
 int SMov[32]={1440,1440,1440,0,1440,1440,1440,0,0,0,0,0,1440,1440,1440,0,1440,1440,1440,0,0,0,0,0,1440,1440,1440,0,1440,1440,1440,0};
@@ -18,7 +14,7 @@ int SAdj[32]={0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
 int StaBlink=0; int IntBlink=0;
 int ClawPos=1200;
 
-int forwardDistance, rightDistance, leftDistance;
+int leftDistance = 0, rightDistance = 0;
 
 bool autoMode = false;
 
@@ -31,7 +27,7 @@ static const char PROGMEM INDEX_HTML[] = R"rawliteral(
 #JD {text-align: center;}#JD {text-align: center;font-family: "Lucida Sans Unicode", "Lucida Grande", sans-serif;font-size: 24px;}.foot {text-align: center;font-family: "Comic Sans MS", cursive;font-size: 9px;color: #F00;}
 .button {border: none;color: white;padding: 20px;text-align: center;text-decoration: none;display: inline-block;font-size: 16px;margin: 4px 2px;cursor: pointer;border-radius: 12px;width: 100%;}.red {background-color: #F00;}.green {background-color: #090;}.yellow {background-color:#F90;}.blue {background-color:#03C;}</style>
 <script>var websock;function start() {websock = new WebSocket('ws://' + window.location.hostname + ':81/');websock.onopen = function(evt) { console.log('websock open'); };websock.onclose = function(evt) { console.log('websock close'); };websock.onerror = function(evt) { console.log(evt); }; 
-websock.onmessage = function(evt) {alert(evt);var e = document.getElementById('ledstatus');if (evt.data === 'ledon') { e.style.color = 'red';}else if (evt.data === 'ledoff') {e.style.color = 'black';} else {console.log('unknown event');}};} function buttonclick(e) {websock.send(e.id);}</script>
+websock.onmessage = function(evt) {var e = document.getElementById('ledstatus');if (evt.data === 'ledon') { e.style.color = 'red';}else if (evt.data === 'ledoff') {e.style.color = 'black';} else {console.log('unknown event');}};} function buttonclick(e) {websock.send(e.id);}</script>
 </head><body onload="javascript:start();">&nbsp;<table width="100%" border="1"><tr><td bgcolor="#FFFF33" id="JD">Quadruped Controller</td></tr></table>
 <table width="100" height="249" border="0" align="center">
 <tr><td align="center" valign="middle"><form name="form1" method="post" action=""><label><button id="w 20" type="button" onclick="buttonclick(this);" class="button red">Claw_Close</button> </label></form></td><td align="center" valign="middle"><form name="form1" method="post" action=""><label><button id="w 1 1" type="button" onclick="buttonclick(this);" class="button green">Forward</button></label></form></td><td align="center" valign="middle"><form name="form1" method="post" action=""><label><button id="w 21"  type="button" onclick="buttonclick(this);" class="button red">Claw_Open</button> </label></form></td></tr>
@@ -45,7 +41,6 @@ websock.onmessage = function(evt) {alert(evt);var e = document.getElementById('l
 <td align="center" valign="middle"><form name="form1" method="post" action=""><label><button id="w 7 2"  type="button" onclick="buttonclick(this);" class="button yellow">Автономность</button></label></form></td></tr>
 </table></body></html>
 )rawliteral";
-
 
 WebSocketsServer webSocket = WebSocketsServer(81);
 ESP8266WebServer server(80);
@@ -82,7 +77,7 @@ void setup() {
 
 }
 
-void loop() {
+void loop(){
    if (Serial.available() > 0){
       char c[] = {(char)Serial.read()};
       webSocket.broadcastTXT(c, sizeof(c));
@@ -101,7 +96,7 @@ void loop() {
    }
    webSocket.loop();
    server.handleClient();
-   if (CommOut == "w 0 1"){Move_STP();autoMode;} //~~~~~~~~ Stop
+   if (CommOut == "w 0 1"){Move_STP();} //~~~~~~~~ Stop
    if (CommOut == "w 1 1") Move_FWD(); //~~~~~~~~ Forward
    if (CommOut == "w 2 1") Move_BWD(); //~~~~~~~~ backward
    if (CommOut == "w 3 1") Move_LFT(); //~~~~~~~~ turn left
@@ -145,24 +140,45 @@ void loop() {
     autoMode = !autoMode;
     if(!autoMode) Move_STP();StepSpeed = lastSpeed;CommOut=lastComm;
    }
-   
+   int distance_cm = 0;
    if(autoMode){
-      digitalWrite(trigPin, LOW);
-      delayMicroseconds(2);
-      digitalWrite(trigPin, HIGH);
-      delayMicroseconds(10);
-      digitalWrite(trigPin, LOW);
-      duration = pulseIn(echoPin, HIGH);
-      distance_cm = duration / 58;
-      distance_in = duration / 148;
+      distance_cm = doSonar();
       if(distance_cm <= 25){
-        Move_RGT();
+        Serial.println("#10P" + String(500) + "T50D0");
+        wait_serial_return_ok();
+        leftDistance = doSonar();
+        delay(500);
+        Serial.println("#10P" + String(3000) + "T50D0");
+        wait_serial_return_ok();
+        rightDistance = doSonar();
+        delay(500);
+        Serial.println("#10P" + String(1440) + "T50D0");
+        wait_serial_return_ok();
+        delay(500);
+        
+        while(distance_cm <= 30){
+          distance_cm = doSonar();
+          if(leftDistance > rightDistance){
+            Move_RGT();
+          }else{
+            Move_LFT();  
+          }
+        }
       }else{
         Move_FWD();
       }
    }
 }
-
+int doSonar(){
+  long duration;
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+  duration = pulseIn(echoPin, HIGH);
+  return duration / 58;
+}
 void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length)
 {
   switch(type) {
